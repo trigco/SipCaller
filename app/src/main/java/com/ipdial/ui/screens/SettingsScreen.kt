@@ -1,0 +1,513 @@
+package com.ipdial.ui.screens
+
+import android.app.Activity
+import android.content.Intent
+import android.media.RingtoneManager
+import android.net.Uri
+import android.os.Build
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import com.ipdial.R
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import com.ipdial.data.model.*
+import com.ipdial.ui.IPDialTopBar
+import com.ipdial.ui.SipViewModel
+import com.ipdial.util.UpdateChecker
+import kotlinx.coroutines.launch
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(
+    vm: SipViewModel,
+    onOpenDrawer: () -> Unit,
+    onNavigateToLogs: () -> Unit,
+    onNavigateToCodecs: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val accounts by vm.accounts.collectAsState()
+    val globalRingtone by vm.globalRingtone.collectAsState()
+    val activeAccount by vm.activeAccount.collectAsState()
+    val fontSizeMultiplier by vm.fontSizeMultiplier.collectAsState()
+    val appIconAlias by vm.appIconAlias.collectAsState()
+    val keypadDesign by vm.keypadDesign.collectAsState()
+    
+    var showRestartDialog by remember { mutableStateOf(false) }
+
+    if (showRestartDialog) {
+        AlertDialog(
+            onDismissRequest = { showRestartDialog = false },
+            title = { Text("Restart Required") },
+            text = { Text("The app icon has been updated. Please restart the app or check your home screen after a few seconds to see the change.") },
+            confirmButton = {
+                TextButton(onClick = { 
+                    showRestartDialog = false
+                    // Force exit to help launcher pick up change on some devices
+                    (context as? Activity)?.finishAffinity()
+                }) { Text("OK") }
+            }
+        )
+    }
+
+    val ringtonePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = result.data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            scope.launch { vm.repo.setGlobalRingtone(uri?.toString()) }
+        }
+    }
+
+    val currentVersion = remember {
+        try {
+            val pm = context.packageManager
+            val pkgName = context.packageName
+            pm.getPackageInfo(pkgName, 0)?.versionName ?: "1.0"
+        }
+        catch (e: Exception) {
+            "1.0"
+        }
+    }
+
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var updateRelease by remember { mutableStateOf<UpdateChecker.GitHubRelease?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var showFontSizeDialog by remember { mutableStateOf(false) }
+    var showAppIconDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
+
+    if (showThemeDialog) {
+        AlertDialog(
+            onDismissRequest = { showThemeDialog = false },
+            title = { Text("Select Theme") },
+            text = {
+                Column {
+                    ThemeMode.entries.forEach { mode ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                vm.setThemeMode(context, mode)
+                                showThemeDialog = false
+                            }.padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val themeMode by vm.themeMode.collectAsState()
+                            RadioButton(selected = themeMode == mode, onClick = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(mode.name)
+                        }
+                    }
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
+    if (showFontSizeDialog) {
+        AlertDialog(
+            onDismissRequest = { showFontSizeDialog = false },
+            title = { Text("Select Font Size") },
+            text = {
+                Column {
+                    listOf("Small" to 0.85f, "Normal" to 1.0f, "Large" to 1.15f, "Extra Large" to 1.3f).forEach { (label, multiplier) ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                vm.setFontSize(context, multiplier)
+                                showFontSizeDialog = false
+                            }.padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = fontSizeMultiplier == multiplier, onClick = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(label)
+                        }
+                    }
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
+    if (showAppIconDialog) {
+        AlertDialog(
+            onDismissRequest = { showAppIconDialog = false },
+            title = { Text("Choose App Icon") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    val icons = listOf(
+                        "Default" to R.drawable.ic_launcher_foreground,
+                        "Green" to R.drawable.ic_phone_green,
+                        "Blue" to R.drawable.ic_phone_blue,
+                        "Red" to R.drawable.ic_phone_red
+                    )
+                    
+                    icons.chunked(2).forEach { row ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            row.forEach { (alias, resId) ->
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            if (appIconAlias == alias) MaterialTheme.colorScheme.primaryContainer 
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                        )
+                                        .clickable {
+                                            vm.setAppIcon(context, alias)
+                                            com.ipdial.util.AppIconHelper.setAppIcon(context, alias)
+                                            showAppIconDialog = false
+                                            showRestartDialog = true
+                                        }
+                                        .padding(12.dp)
+                                ) {
+                                    androidx.compose.foundation.Image(
+                                        painter = androidx.compose.ui.res.painterResource(resId),
+                                        contentDescription = alias,
+                                        modifier = Modifier.size(64.dp)
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        text = alias,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = if (appIconAlias == alias) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
+                            if (row.size == 1) {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
+    if (showUpdateDialog) {
+        val release = updateRelease ?: return
+        AlertDialog(
+            onDismissRequest = { showUpdateDialog = false },
+            icon = { Icon(Icons.Default.SystemUpdate, null) },
+            title = { Text("Update Available") },
+            text = {
+                Column {
+                    Text("Version ${release.tagName.trimStart('v')} is available.")
+                    if (!release.body.isNullOrBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(release.body.take(300), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showUpdateDialog = false
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl))
+                    context.startActivity(intent)
+                }) { Text("Download") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUpdateDialog = false }) { Text("Later") }
+            }
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            IPDialTopBar(accounts = accounts, vm = vm, onOpenDrawer = onOpenDrawer)
+        },
+        bottomBar = {
+            com.ipdial.ui.StartIoBanner(
+                vm = vm,
+                modifier = Modifier.fillMaxWidth().padding(8.dp)
+            )
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .background(MaterialTheme.colorScheme.background),
+            contentPadding = PaddingValues(bottom = 80.dp)
+        ) {
+            item {
+                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    TelegramSupportCard()
+                }
+            }
+
+            item { SettingsSection("Updates") }
+            item {
+                SettingsRow(
+                    icon = Icons.Default.SystemUpdate,
+                    title = "Check for Updates",
+                    subtitle = if (checkingUpdate) "Checking…" else "Current version: $currentVersion",
+                    trailing = { if (checkingUpdate) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) },
+                    onClick = {
+                        if (!checkingUpdate) {
+                            checkingUpdate = true
+                            scope.launch {
+                                val release = UpdateChecker.checkForUpdates(currentVersion)
+                                checkingUpdate = false
+                                if (release != null) {
+                                    updateRelease = release
+                                    showUpdateDialog = true
+                                } else {
+                                    android.widget.Toast.makeText(context, "You're on the latest version!", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
+                )
+            }
+
+            item { SettingsSection("Audio") }
+            item {
+                val ringtoneName = if (globalRingtone != null) {
+                    try {
+                        globalRingtone?.let { uri ->
+                            RingtoneManager.getRingtone(context, Uri.parse(uri))?.getTitle(context)
+                        } ?: "Default"
+                    }
+                    catch (_: Exception) { "Default" }
+                } else "Default"
+                
+                SettingsRow(
+                    icon = Icons.Default.NotificationsActive,
+                    title = "Ringtone",
+                    subtitle = ringtoneName,
+                    onClick = { 
+                        val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                            putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_RINGTONE)
+                            putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Select Ringtone")
+                            globalRingtone?.let { putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, Uri.parse(it)) }
+                            putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                            putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, true)
+                        }
+                        ringtonePickerLauncher.launch(intent)
+                    }
+                )
+            }
+
+            item {
+                val globalVibrate by vm.globalVibrate.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.Vibration,
+                    title = "Vibrate on Ring",
+                    subtitle = "Vibrate when receiving incoming calls",
+                    trailing = { Switch(checked = globalVibrate, onCheckedChange = { vm.setGlobalVibrate(it) }) },
+                    onClick = { vm.setGlobalVibrate(!globalVibrate) }
+                )
+            }
+
+            item { SettingsSection("Audio Codecs") }
+            item {
+                SettingsRow(
+                    icon = Icons.Default.Audiotrack,
+                    title = "Audio Codecs",
+                    subtitle = activeAccount?.codec?.name ?: "Configure Codecs",
+                    onClick = {
+                        onNavigateToCodecs()
+                    }
+                )
+            }
+
+            item { SettingsSection("General") }
+            item {
+                SettingsRow(
+                    icon = Icons.Default.TextFields,
+                    title = "Font Size",
+                    subtitle = when(fontSizeMultiplier) {
+                        0.85f -> "Small"
+                        1.15f -> "Large"
+                        1.3f -> "Extra Large"
+                        else -> "Normal"
+                    },
+                    onClick = { showFontSizeDialog = true }
+                )
+            }
+
+            item {
+                val isPro by vm.isPro.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.GridOn,
+                    title = "Keypad Design",
+                    subtitle = if (keypadDesign == KeypadDesign.Rounded) "Fully Rounded" else "Grid",
+                    trailing = { 
+                        Switch(
+                            checked = keypadDesign == KeypadDesign.Rounded, 
+                            onCheckedChange = { 
+                                if (!isPro) {
+                                    vm.showAdGate {
+                                        vm.setKeypadDesign(context, if (it) KeypadDesign.Rounded else KeypadDesign.Grid)
+                                    }
+                                } else {
+                                    vm.setKeypadDesign(context, if (it) KeypadDesign.Rounded else KeypadDesign.Grid)
+                                }
+                            }
+                        ) 
+                    },
+                    onClick = { 
+                        if (!isPro) {
+                            vm.showAdGate {
+                                vm.setKeypadDesign(context, if (keypadDesign == KeypadDesign.Rounded) KeypadDesign.Grid else KeypadDesign.Rounded)
+                            }
+                        } else {
+                            vm.setKeypadDesign(context, if (keypadDesign == KeypadDesign.Rounded) KeypadDesign.Grid else KeypadDesign.Rounded)
+                        }
+                    }
+                )
+            }
+
+            item {
+                val isPro by vm.isPro.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.Brush,
+                    title = "Choose App Icon",
+                    subtitle = appIconAlias,
+                    onClick = { 
+                        if (!isPro) {
+                            vm.showAdGate {
+                                showAppIconDialog = true
+                            }
+                        } else {
+                            showAppIconDialog = true
+                        }
+                    }
+                )
+            }
+
+            item {
+                val callsCardsEnabled by vm.callingCardsEnabled.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.ContactPage,
+                    title = "Calling Cards",
+                    subtitle = "Enable full screen contact photo setup",
+                    trailing = { Switch(checked = callsCardsEnabled, onCheckedChange = { vm.setCallingCards(it) }) },
+                    onClick = { vm.setCallingCards(!callsCardsEnabled) }
+                )
+            }
+
+            item {
+                val themeMode by vm.themeMode.collectAsState()
+                val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+                SettingsRow(
+                    icon = Icons.Default.DisplaySettings,
+                    title = "App Theme",
+                    subtitle = when(themeMode) {
+                        ThemeMode.Dark -> "Dark"
+                        ThemeMode.Light -> "Light"
+                        ThemeMode.Glass -> "Glass"
+                        ThemeMode.Obsidian -> "Obsidian"
+                        ThemeMode.Quartz -> "Quartz"
+                        ThemeMode.System -> "System (${if(systemDark) "Dark" else "Light"})"
+                    },
+                    onClick = { showThemeDialog = true }
+                )
+            }
+            
+            item {
+                val dndEnabled by vm.dndEnabled.collectAsState()
+                SettingsRow(
+                    icon = Icons.Default.DoNotDisturbOn,
+                    title = "Do Not Disturb",
+                    subtitle = "Automatically decline incoming calls",
+                    trailing = { Switch(checked = dndEnabled, onCheckedChange = { vm.setDnd(it) }) },
+                    onClick = { vm.setDnd(!dndEnabled) }
+                )
+            }
+
+            item { SettingsSection("System") }
+            item {
+                SettingsRow(
+                    icon = Icons.AutoMirrored.Filled.List,
+                    title = "Activity Log",
+                    subtitle = "View full system activity logs",
+                    onClick = { onNavigateToLogs() }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsSection(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 4.dp, end = 16.dp)
+    )
+}
+
+@Composable
+fun SettingsRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String? = null,
+    trailing: @Composable (() -> Unit)? = null,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickableWithRipple { onClick() }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            trailing?.invoke()
+        }
+        HorizontalDivider(
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+            modifier = Modifier.padding(start = 56.dp)
+        )
+    }
+}
